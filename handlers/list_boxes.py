@@ -1,22 +1,40 @@
 from aiogram import types
 from aiogram.dispatcher import Dispatcher
 from aiogram.dispatcher.filters import Text
-from handlers.add_box import BOXES
+from database.db import DB_PATH
+import aiosqlite
+from datetime import datetime
 
 async def handle_list_boxes(message: types.Message):
     user_id = message.from_user.id
-    user_boxes = BOXES.get(user_id, [])
+    boxes = []
 
-    if not user_boxes:
+    # Получаем коробки пользователя из базы данных
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("""
+            SELECT photo, description, location, created_at
+            FROM boxes
+            WHERE user_id = ?
+            ORDER BY created_at DESC
+        """, (user_id,)) as cursor:
+            async for row in cursor:
+                photo, description, location, created_at = row
+                created_at = datetime.fromisoformat(created_at)
+                boxes.append({
+                    "photo": photo,
+                    "description": description,
+                    "location": location,
+                    "created_at": created_at
+                })
+
+    if not boxes:
         await message.answer("📭 *У тебя пока нет коробок.*", parse_mode="Markdown")
         return
 
-    await message.answer(f"*📦 Всего коробок:* `{len(user_boxes)}`", parse_mode="Markdown")
+    await message.answer(f"*📦 Всего коробок:* `{len(boxes)}`", parse_mode="Markdown")
 
-    for box in user_boxes:
-        created_at = box.get("created_at")
-        date_str = created_at.strftime("%d.%m.%Y %H:%M") if created_at else "неизвестна"
-
+    for box in boxes:
+        date_str = box["created_at"].strftime("%d.%m.%Y %H:%M")
         await message.answer_photo(
             box["photo"],
             caption=(
@@ -27,6 +45,6 @@ async def handle_list_boxes(message: types.Message):
             parse_mode="Markdown"
         )
 
-
+# Регистрируем хендлер
 def register(dp: Dispatcher):
     dp.register_message_handler(handle_list_boxes, Text(equals="📦 Мои коробки"))

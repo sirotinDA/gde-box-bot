@@ -1,6 +1,7 @@
 from aiogram import types
 from aiogram.dispatcher import Dispatcher
-from handlers.add_box import BOXES
+import aiosqlite
+from database.db import DB_PATH
 
 async def find_box(message: types.Message):
     user_id = message.from_user.id
@@ -10,17 +11,24 @@ async def find_box(message: types.Message):
         await message.answer("❗ Укажи, что искать. Пример:\n`/find насос`", parse_mode="Markdown")
         return
 
-    boxes = BOXES.get(user_id, [])
-    results = [b for b in boxes if args in b["description"].lower()]
+    results = []
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT photo, description, location FROM boxes WHERE user_id = ?", (user_id,)
+        ) as cursor:
+            async for row in cursor:
+                photo, desc, loc = row
+                if args in desc.lower():
+                    results.append((photo, desc, loc))
 
     if not results:
         await message.answer("🔍 *Ничего не найдено.*", parse_mode="Markdown")
     else:
         await message.answer(f"*🔎 Найдено:* `{len(results)}`", parse_mode="Markdown")
-        for box in results:
+        for photo, desc, loc in results:
             await message.answer_photo(
-                box["photo"],
-                caption=f"*📦* `{box['description']}`\n*📍* `{box['location']}`",
+                photo,
+                caption=f"*📦* `{desc}`\n*📍* `{loc}`",
                 parse_mode="Markdown"
             )
 
