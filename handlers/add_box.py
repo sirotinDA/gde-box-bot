@@ -3,6 +3,7 @@ from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters import Command, Text
 from aiogram.dispatcher import Dispatcher
 from states import AddBox
+from datetime import datetime
 
 # user_id -> list of box dicts
 BOXES = {}
@@ -56,7 +57,8 @@ async def handle_location(message: types.Message, state: FSMContext):
     BOXES[user_id].append({
         "photo": data["photo"],
         "description": data["description"],
-        "location": location
+        "location": location,
+        "created_at": datetime.now()
     })
 
     await message.answer(

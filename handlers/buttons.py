@@ -25,7 +25,7 @@ def register(dp: Dispatcher):
     dp.register_callback_query_handler(cancel_action_callback, lambda c: c.data == "cancel", state="*")
     dp.register_message_handler(handle_photo, content_types=types.ContentType.PHOTO, state=AddBox.waiting_for_photo)
     dp.register_message_handler(handle_description, state=AddBox.waiting_for_description)
-    dp.register_message_handler(handle_location, state=AddBox.waiting_for_location)
+    dp.register_message_handler(handle_location_inline, state=AddBox.waiting_for_location)
 
 # 🔘 Главное меню: кнопки
 async def button_handler(message: types.Message, state: FSMContext):
@@ -97,7 +97,7 @@ async def handle_description(message: types.Message, state: FSMContext):
     await message.answer("🏷 Укажи место хранения (например, 'гараж'):", reply_markup=types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("⬅ Назад", callback_data="cancel")))
     await AddBox.waiting_for_location.set()
 
-async def handle_location(message: types.Message, state: FSMContext):
+async def handle_location_inline(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
     data = await state.get_data()
     photo = data.get("photo")
@@ -109,7 +109,15 @@ async def handle_location(message: types.Message, state: FSMContext):
         await state.finish()
         return
 
-    box = {"photo": photo, "description": description, "location": location}
+    from datetime import datetime  # добавь вверху файла, если ещё не было
+
+    box = {
+        "photo": photo,
+        "description": description,
+        "location": location,
+        "created_at": datetime.now()
+    }
+
     if user_id not in BOXES:
         BOXES[user_id] = []
     BOXES[user_id].append(box)
@@ -134,15 +142,15 @@ async def handle_location_choice(callback: types.CallbackQuery):
         await callback.answer()
         return
 
-    media = [types.InputMediaPhoto(b["photo"]) for b in boxes]
-    if media:
-        await callback.message.answer_media_group(media)
+    for b in boxes:
+        date_str = b.get("created_at").strftime("%d.%m.%Y %H:%M") if b.get("created_at") else "неизвестно"
+        caption = (
+            f"*📦* `{b['description']}`\n"
+            f"*📍* `{b['location']}`\n"
+            f"*🗓 Добавлено:* `{date_str}`"
+        )
+        await callback.message.answer_photo(b["photo"], caption=caption, parse_mode="Markdown")
 
-    descs = "\n".join(f"- `{b['description']}`" for b in boxes)
-    await callback.message.answer(
-        f"*📍 Место:* `{location}`\n*📦 Коробок:* `{len(boxes)}`\n\n*Содержимое:*\n{descs}",
-        parse_mode="Markdown"
-    )
     await callback.answer()
 
 # 📍 Полный список предметов по месту
