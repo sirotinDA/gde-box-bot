@@ -2,7 +2,7 @@ from aiogram import Bot, Dispatcher, executor
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from config import BOT_TOKEN
 from database.db import init_db
-from handlers import buttons, add_box, start, find_box, list_boxes
+from handlers import buttons, add_box, remove_item_inline, start, find_box, list_boxes, delete_box_by_id
 
 # Создаём бота и диспетчер
 bot = Bot(token=BOT_TOKEN)
@@ -19,6 +19,8 @@ add_box.register(dp)
 buttons.register(dp)
 find_box.register(dp)
 list_boxes.register(dp)
+remove_item_inline.register(dp)
+delete_box_by_id.register(dp)
 
 # Точка входа
 if __name__ == '__main__':

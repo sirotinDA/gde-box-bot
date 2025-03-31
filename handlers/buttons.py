@@ -5,6 +5,7 @@ from states import SearchState, AddBox
 from database.db import DB_PATH
 import aiosqlite
 from datetime import datetime
+from handlers.list_boxes import handle_list_boxes
 
 main_menu_keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
 main_menu_keyboard.add("📦 Мои коробки", "➕ Добавить коробку")
@@ -33,7 +34,7 @@ async def button_handler(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
     text = message.text.strip().lower()
 
-    if "удалить" in text or "мои коробки" in text or "места хранения" in text:
+    if "удалить" in text or "места хранения" in text:
         locations = {}
         async with aiosqlite.connect(DB_PATH) as db:
             async with db.execute("SELECT location FROM boxes WHERE user_id = ?", (user_id,)) as cursor:
@@ -46,23 +47,29 @@ async def button_handler(message: types.Message, state: FSMContext):
             return
 
         keyboard = types.InlineKeyboardMarkup()
-        action = "delete_from" if "удалить" in text else "storage" if "места хранения" in text else "location"
+        action = "delete_from" if "удалить" in text else "storage"
         for loc, count in locations.items():
             keyboard.add(types.InlineKeyboardButton(text=f"{loc} ({count})", callback_data=f"{action}:{loc}"))
 
         label = {
             "delete_from": "🗑 *Выбери место для удаления:*",
-            "storage": "📍 *Выберите место хранения:*",
-            "location": "📦 *Выбери место:*"
+            "storage": "📍 *Выберите место хранения:*"
         }
 
         await message.answer(label[action], reply_markup=keyboard, parse_mode="Markdown")
         return
 
+    # 📦 Отдельно обрабатываем "мои коробки" — через list_boxes.py
+    if "мои коробки" in text:
+        await handle_list_boxes(message)
+        return
+
+    # 🔍 Поиск
     if "поиск" in text:
         await message.answer("🔍 *Введите слово для поиска:*", reply_markup=cancel_keyboard, parse_mode="Markdown")
         await SearchState.waiting_for_keyword.set()
         return
+
 
 # ➕ Добавление коробки
 async def start_add_box(message: types.Message, state: FSMContext):
