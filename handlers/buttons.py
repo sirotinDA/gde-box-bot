@@ -1,9 +1,10 @@
-# handlers/buttons.py
 from aiogram import types
 from aiogram.dispatcher import Dispatcher, FSMContext
 from aiogram.dispatcher.filters import Text
-from handlers.add_box import BOXES
 from states import SearchState, AddBox
+from database.db import DB_PATH
+import aiosqlite
+from datetime import datetime
 
 main_menu_keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
 main_menu_keyboard.add("📦 Мои коробки", "➕ Добавить коробку")
@@ -32,49 +33,30 @@ async def button_handler(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
     text = message.text.strip().lower()
 
-    if "удалить" in text:
-        boxes = BOXES.get(user_id, [])
-        if not boxes:
+    if "удалить" in text or "мои коробки" in text or "места хранения" in text:
+        locations = {}
+        async with aiosqlite.connect(DB_PATH) as db:
+            async with db.execute("SELECT location FROM boxes WHERE user_id = ?", (user_id,)) as cursor:
+                async for row in cursor:
+                    loc = row[0]
+                    locations[loc] = locations.get(loc, 0) + 1
+
+        if not locations:
             await message.answer("📭 *У тебя пока нет коробок.*", parse_mode="Markdown")
             return
-        locations = {}
-        for box in boxes:
-            loc = box["location"]
-            locations[loc] = locations.get(loc, 0) + 1
-        keyboard = types.InlineKeyboardMarkup()
-        for loc, count in locations.items():
-            keyboard.add(types.InlineKeyboardButton(text=f"{loc} ({count})", callback_data=f"delete_from:{loc}"))
-        await message.answer("🗑 *Выбери место для удаления:*", reply_markup=keyboard, parse_mode="Markdown")
-        return
 
-    if "мои коробки" in text:
-        boxes = BOXES.get(user_id, [])
-        if not boxes:
-            await message.answer("📬 *У тебя пока нет коробок.*", parse_mode="Markdown")
-            return
-        locations = {}
-        for box in boxes:
-            loc = box["location"]
-            locations[loc] = locations.get(loc, 0) + 1
         keyboard = types.InlineKeyboardMarkup()
+        action = "delete_from" if "удалить" in text else "storage" if "места хранения" in text else "location"
         for loc, count in locations.items():
-            keyboard.add(types.InlineKeyboardButton(text=f"{loc} ({count})", callback_data=f"location:{loc}"))
-        await message.answer("📦 *Выбери место:*", reply_markup=keyboard, parse_mode="Markdown")
-        return
+            keyboard.add(types.InlineKeyboardButton(text=f"{loc} ({count})", callback_data=f"{action}:{loc}"))
 
-    if "места хранения" in text:
-        boxes = BOXES.get(user_id, [])
-        if not boxes:
-            await message.answer("❗ *У тебя пока нет мест.*", parse_mode="Markdown")
-            return
-        locations = {}
-        for box in boxes:
-            loc = box["location"]
-            locations[loc] = locations.get(loc, 0) + 1
-        keyboard = types.InlineKeyboardMarkup()
-        for loc, count in locations.items():
-            keyboard.add(types.InlineKeyboardButton(text=f"{loc} ({count})", callback_data=f"storage:{loc}"))
-        await message.answer("📍 *Выберите место хранения:*", reply_markup=keyboard, parse_mode="Markdown")
+        label = {
+            "delete_from": "🗑 *Выбери место для удаления:*",
+            "storage": "📍 *Выберите место хранения:*",
+            "location": "📦 *Выбери место:*"
+        }
+
+        await message.answer(label[action], reply_markup=keyboard, parse_mode="Markdown")
         return
 
     if "поиск" in text:
@@ -84,17 +66,17 @@ async def button_handler(message: types.Message, state: FSMContext):
 
 # ➕ Добавление коробки
 async def start_add_box(message: types.Message, state: FSMContext):
-    await message.answer("📷 Отправь фото коробки:", reply_markup=types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("⬅ Назад", callback_data="cancel")))
+    await message.answer("📷 Отправь фото коробки:", reply_markup=cancel_keyboard)
     await AddBox.waiting_for_photo.set()
 
 async def handle_photo(message: types.Message, state: FSMContext):
     await state.update_data(photo=message.photo[-1].file_id)
-    await message.answer("✏️ Напиши, что находится в коробке:", reply_markup=types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("⬅ Назад", callback_data="cancel")))
+    await message.answer("✏️ Напиши, что находится в коробке:", reply_markup=cancel_keyboard)
     await AddBox.waiting_for_description.set()
 
 async def handle_description(message: types.Message, state: FSMContext):
     await state.update_data(description=message.text)
-    await message.answer("🏷 Укажи место хранения (например, 'гараж'):", reply_markup=types.InlineKeyboardMarkup().add(types.InlineKeyboardButton("⬅ Назад", callback_data="cancel")))
+    await message.answer("🏷 Укажи место хранения (например, 'гараж'):", reply_markup=cancel_keyboard)
     await AddBox.waiting_for_location.set()
 
 async def handle_location_inline(message: types.Message, state: FSMContext):
@@ -109,18 +91,12 @@ async def handle_location_inline(message: types.Message, state: FSMContext):
         await state.finish()
         return
 
-    from datetime import datetime  # добавь вверху файла, если ещё не было
-
-    box = {
-        "photo": photo,
-        "description": description,
-        "location": location,
-        "created_at": datetime.now()
-    }
-
-    if user_id not in BOXES:
-        BOXES[user_id] = []
-    BOXES[user_id].append(box)
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            INSERT INTO boxes (user_id, photo, description, location, created_at)
+            VALUES (?, ?, ?, ?, ?)
+        """, (user_id, photo, description, location, datetime.now().isoformat()))
+        await db.commit()
 
     await message.answer("✅ Коробка добавлена!", reply_markup=main_menu_keyboard)
     await state.finish()
@@ -135,21 +111,23 @@ async def cancel_action_callback(callback: types.CallbackQuery, state: FSMContex
 async def handle_location_choice(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     location = callback.data.replace("location:", "")
-    boxes = [b for b in BOXES.get(user_id, []) if b["location"] == location]
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("""
+            SELECT photo, description, location, created_at
+            FROM boxes WHERE user_id = ? AND location = ?
+        """, (user_id, location)) as cursor:
+            boxes = await cursor.fetchall()
 
     if not boxes:
         await callback.message.answer("❗ *В этом месте нет коробок.*", parse_mode="Markdown")
         await callback.answer()
         return
 
-    for b in boxes:
-        date_str = b.get("created_at").strftime("%d.%m.%Y %H:%M") if b.get("created_at") else "неизвестно"
-        caption = (
-            f"*📦* `{b['description']}`\n"
-            f"*📍* `{b['location']}`\n"
-            f"*🗓 Добавлено:* `{date_str}`"
-        )
-        await callback.message.answer_photo(b["photo"], caption=caption, parse_mode="Markdown")
+    for row in boxes:
+        photo, description, location, created_at = row
+        date_str = datetime.fromisoformat(created_at).strftime("%d.%m.%Y %H:%M")
+        caption = f"*📦* `{description}`\n*📍* `{location}`\n*🗓 Добавлено:* `{date_str}`"
+        await callback.message.answer_photo(photo, caption=caption, parse_mode="Markdown")
 
     await callback.answer()
 
@@ -157,20 +135,24 @@ async def handle_location_choice(callback: types.CallbackQuery):
 async def handle_storage_overview(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     location = callback.data.replace("storage:", "")
-    boxes = [b for b in BOXES.get(user_id, []) if b["location"] == location]
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("""
+            SELECT description FROM boxes WHERE user_id = ? AND location = ?
+        """, (user_id, location)) as cursor:
+            descriptions = await cursor.fetchall()
 
-    if not boxes:
+    if not descriptions:
         await callback.message.answer("❗ *В этом месте нет коробок.*", parse_mode="Markdown")
         await callback.answer()
         return
 
     all_items = []
-    for b in boxes:
-        all_items += [i.strip() for i in b["description"].split(",")]
+    for (desc,) in descriptions:
+        all_items += [i.strip() for i in desc.split(",")]
 
     formatted = "\n".join(f"- `{i}`" for i in sorted(set(all_items)))
     await callback.message.answer(
-        f"*📍 Место:* `{location}`\n*📦 Коробок:* `{len(boxes)}`\n\n*🧾 Все предметы:*\n{formatted}",
+        f"*📍 Место:* `{location}`\n*📦 Коробок:* `{len(descriptions)}`\n\n*🧾 Все предметы:*\n{formatted}",
         parse_mode="Markdown"
     )
     await callback.answer()
@@ -179,15 +161,23 @@ async def handle_storage_overview(callback: types.CallbackQuery):
 async def process_search(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
     keyword = message.text.lower()
-    boxes = BOXES.get(user_id, [])
-    results = [b for b in boxes if keyword in b["description"].lower()]
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("""
+            SELECT photo, description, location FROM boxes WHERE user_id = ?
+        """, (user_id,)) as cursor:
+            results = []
+            async for row in cursor:
+                photo, desc, loc = row
+                if keyword in desc.lower():
+                    results.append((photo, desc, loc))
 
     if not results:
         await message.answer("❗ *Ничего не найдено.*", reply_markup=main_menu_keyboard, parse_mode="Markdown")
     else:
         await message.answer(f"*🔎 Найдено:* `{len(results)}`", reply_markup=main_menu_keyboard, parse_mode="Markdown")
-        for b in results:
-            await message.answer_photo(b["photo"], caption=f"*📦* `{b['description']}`\n*📍* `{b['location']}`", parse_mode="Markdown")
+        for photo, desc, loc in results:
+            await message.answer_photo(photo, caption=f"*📦* `{desc}`\n*📍* `{loc}`", parse_mode="Markdown")
 
     await state.finish()
 
@@ -195,45 +185,45 @@ async def process_search(message: types.Message, state: FSMContext):
 async def handle_delete_start(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     location = callback.data.replace("delete_from:", "")
-    boxes = [b for b in BOXES.get(user_id, []) if b["location"] == location]
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("""
+            SELECT id, photo, description FROM boxes WHERE user_id = ? AND location = ?
+        """, (user_id, location)) as cursor:
+            boxes = await cursor.fetchall()
 
     if not boxes:
         await callback.message.answer("❗ *В этом месте нет коробок.*", parse_mode="Markdown")
         await callback.answer()
         return
 
-    for idx, b in enumerate(boxes):
+    for box_id, photo, desc in boxes:
         keyboard = types.InlineKeyboardMarkup()
-        keyboard.add(types.InlineKeyboardButton("Удалить", callback_data=f"delete_box:{location}:{idx}"))
-        await callback.message.answer_photo(b["photo"], caption=f"*📦* `{b['description']}`\n*📍* `{b['location']}`", reply_markup=keyboard, parse_mode="Markdown")
+        keyboard.add(types.InlineKeyboardButton("Удалить", callback_data=f"delete_box:{box_id}"))
+        await callback.message.answer_photo(photo, caption=f"*📦* `{desc}`", reply_markup=keyboard, parse_mode="Markdown")
 
     await callback.answer()
 
 # ✅ Удаление коробки
 async def handle_delete_box(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
-    _, location, idx = callback.data.split(":")
-    idx = int(idx)
-    user_boxes = BOXES.get(user_id, [])
-    filtered = [b for b in user_boxes if b["location"] == location]
+    box_id = int(callback.data.split(":")[1])
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM boxes WHERE id = ?", (box_id,))
+        await db.commit()
 
-    if idx >= len(filtered):
-        await callback.message.answer("⚠️ Коробка не найдена.")
-        await callback.answer()
-        return
-
-    BOXES[user_id].remove(filtered[idx])
     await callback.message.answer("✅ Коробка удалена!", reply_markup=main_menu_keyboard)
     await callback.answer()
 
-# 🧹 Удаление пустого места
+# 🧹 Удаление места (если там пусто)
 async def handle_delete_location(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     location = callback.data.replace("delete_location:", "")
-    before = len(BOXES.get(user_id, []))
-    BOXES[user_id] = [b for b in BOXES.get(user_id, []) if b["location"] != location]
-    after = len(BOXES[user_id])
-    if before == after:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute("""
+            SELECT COUNT(*) FROM boxes WHERE user_id = ? AND location = ?
+        """, (user_id, location)) as cursor:
+            (count,) = await cursor.fetchone()
+
+    if count == 0:
         await callback.message.answer(f"✅ Место `{location}` удалено.", parse_mode="Markdown")
     else:
         await callback.message.answer(f"⚠ В месте `{location}` есть коробки. Сначала удали их.", parse_mode="Markdown")
