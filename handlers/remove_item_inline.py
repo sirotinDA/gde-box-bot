@@ -1,74 +1,186 @@
 from aiogram import types
-from aiogram.dispatcher import FSMContext, Dispatcher
-from aiogram.dispatcher.filters import Text
-from aiogram.dispatcher.filters.state import State, StatesGroup
-from database.db import DB_PATH
+from aiogram.dispatcher import Dispatcher, FSMContext
 import aiosqlite
+from database.db import DB_PATH
+from handlers.keyboards import main_menu_keyboard
+from states import AddItemToBox, AddItemFromMenu
+from datetime import datetime
 
-# Состояние для удаления
-class RemoveItemState(StatesGroup):
-    waiting_for_item_name = State()
-
-# Временное хранилище выбранной коробки
-box_ids = {}
-
-# Шаг 1: пользователь нажал кнопку "Удалить вещь"
-async def handle_remove_item_button(callback: types.CallbackQuery, state: FSMContext):
+# 🗑 Удалить вещь — выбор
+async def remove_item_from_box(callback: types.CallbackQuery):
     box_id = int(callback.data.split(":")[1])
     user_id = callback.from_user.id
 
-    box_ids[user_id] = box_id
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("SELECT description, photo, location FROM boxes WHERE id = ? AND user_id = ?", (box_id, user_id))
+        row = await cursor.fetchone()
 
-    await callback.message.answer("✏️ Напиши, какую вещь ты хочешь удалить из коробки.")
-    await RemoveItemState.waiting_for_item_name.set()
-    await callback.answer()
+        if not row:
+            await callback.message.answer("❌ Коробка не найдена.", reply_markup=main_menu_keyboard)
+            return
 
-# Шаг 2: пользователь написал название вещи
-async def handle_item_name_input(message: types.Message, state: FSMContext):
-    user_id = message.from_user.id
-    item = message.text.strip().lower()
+        items = [item.strip() for item in row["description"].split(",") if item.strip()]
 
-    box_id = box_ids.get(user_id)
-    if not box_id:
-        await message.answer("⚠️ Не удалось определить коробку.")
-        await state.finish()
-        return
+        if not items:
+            await callback.message.answer("📭 Коробка уже пустая.", reply_markup=main_menu_keyboard)
+            return
+
+        keyboard = types.InlineKeyboardMarkup(row_width=1)
+        for item in items:
+            keyboard.add(
+                types.InlineKeyboardButton(text=f"❌ {item}", callback_data=f"confirm_remove_item:{box_id}:{item}")
+            )
+
+        await callback.message.edit_reply_markup(reply_markup=keyboard)
+        await callback.answer()
+
+# ✅ Подтверждение удаления вещи
+async def confirm_remove_item(callback: types.CallbackQuery):
+    _, box_id, item_to_remove = callback.data.split(":", 2)
+    box_id = int(box_id)
+    user_id = callback.from_user.id
 
     async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute("SELECT description FROM boxes WHERE id = ?", (box_id,)) as cursor:
-            row = await cursor.fetchone()
-            if not row:
-                await message.answer("❌ Коробка не найдена.")
-                await state.finish()
-                return
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("SELECT description, photo, location FROM boxes WHERE id = ? AND user_id = ?", (box_id, user_id))
+        box = await cursor.fetchone()
 
-            items = [i.strip() for i in row[0].split(",")]
-            lowered = [i.lower() for i in items]
+        if not box:
+            await callback.message.answer("❌ Коробка не найдена.", reply_markup=main_menu_keyboard)
+            return
 
-            if item not in lowered:
-                await message.answer("❗ Такой вещи нет в этой коробке.")
-                await state.finish()
-                return
+        description = box["description"]
+        photo = box["photo"]
+        location = box["location"]
 
-            new_items = [i for i in items if i.lower() != item]
+        items = [item.strip() for item in description.split(",") if item.strip().lower() != item_to_remove.lower()]
+        new_desc = ", ".join(items)
 
-            async with db.cursor() as cur:
-                if new_items:
-                    # Обновляем описание
-                    new_desc = ", ".join(new_items)
-                    await cur.execute("UPDATE boxes SET description = ? WHERE id = ?", (new_desc, box_id))
-                    await message.answer(f"✅ Вещь \"{item}\" удалена из коробки.")
-                else:
-                    # Удаляем коробку полностью
-                    await cur.execute("DELETE FROM boxes WHERE id = ?", (box_id,))
-                    await message.answer("🗑 Коробка была пустой и удалена целиком.")
+        await db.execute("UPDATE boxes SET description = ? WHERE id = ?", (new_desc, box_id))
+        await db.commit()
 
-                await db.commit()
+        try:
+            await callback.message.delete()
+        except:
+            pass
 
-    await message.answer(f"✅ Вещь \"{item}\" удалена из коробки.")
+        # Формируем клавиатуру с правильными кнопками
+        keyboard = types.InlineKeyboardMarkup(row_width=2)
+        keyboard.row(
+            types.InlineKeyboardButton("✏ Добавить предмет", callback_data=f"add_item:{box_id}:0"),
+            types.InlineKeyboardButton("🗑 Удалить вещь", callback_data=f"remove_item_from:{box_id}")
+        )
+        keyboard.row(
+            types.InlineKeyboardButton("❌ Удалить коробку", callback_data=f"confirm_delete_box:{box_id}")
+        )
+
+        caption = (
+            f"📦 <b>Содержимое:</b> {new_desc or '—'}\n"
+            f"📍 <b>Место:</b> {location}"
+        )
+
+        if photo and (photo.endswith(".jpg") or photo.endswith(".png")):
+            try:
+                with open(photo, "rb") as f:
+                    photo = f.read()
+            except:
+                photo = None
+        else:
+            photo = None
+
+        if photo:
+            await callback.message.bot.send_photo(
+                chat_id=callback.from_user.id,
+                photo=photo,
+                caption=caption,
+                parse_mode="HTML",
+                reply_markup=keyboard
+            )
+        else:
+            await callback.message.bot.send_message(
+                chat_id=callback.from_user.id,
+                text=caption,
+                parse_mode="HTML",
+                reply_markup=keyboard
+            )
+
+        await callback.message.bot.send_message(
+            chat_id=callback.from_user.id,
+            text="✅ Вещь удалена!",
+            reply_markup=main_menu_keyboard
+        )
+
+        await callback.answer()
+
+# ✏ Добавить предмет — старт
+async def start_add_item(callback: types.CallbackQuery, state: FSMContext):
+    parts = callback.data.split(":")
+    box_id = int(parts[1])
+    await state.update_data(box_id=box_id)
+    await callback.message.answer("✍ Введи предмет, который хочешь добавить в коробку:")
+    await AddItemToBox.waiting_for_text.set()
+    await callback.answer()
+
+# ✏ Добавить предмет — текст
+async def add_item_text(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    box_id = data["box_id"]
+    new_item = message.text.strip()
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute("SELECT description, photo, location FROM boxes WHERE id = ?", (box_id,))
+        box = await cursor.fetchone()
+
+        if not box:
+            await message.answer("❌ Коробка не найдена.", reply_markup=main_menu_keyboard)
+            await state.finish()
+            return
+
+        old_desc = box["description"]
+        photo = box["photo"]
+        location = box["location"]
+
+        updated_desc = f"{old_desc}, {new_item}" if old_desc else new_item
+        await db.execute("UPDATE boxes SET description = ? WHERE id = ?", (updated_desc, box_id))
+        await db.commit()
+
+    # Та же клавиатура
+    keyboard = types.InlineKeyboardMarkup(row_width=2)
+    keyboard.row(
+        types.InlineKeyboardButton("✏ Добавить предмет", callback_data=f"add_item:{box_id}:0"),
+        types.InlineKeyboardButton("🗑 Удалить вещь", callback_data=f"remove_item_from:{box_id}")
+    )
+    keyboard.row(
+        types.InlineKeyboardButton("❌ Удалить коробку", callback_data=f"confirm_delete_box:{box_id}")
+    )
+
+    caption = (
+        f"📦 <b>Содержимое:</b> {updated_desc}\n"
+        f"📍 <b>Место:</b> {location}"
+    )
+
+    if photo and (photo.endswith(".jpg") or photo.endswith(".png")):
+        try:
+            with open(photo, "rb") as f:
+                photo = f.read()
+        except:
+            photo = None
+    else:
+        photo = None
+
+    if photo:
+        await message.answer_photo(photo=photo, caption=caption, parse_mode="HTML", reply_markup=keyboard)
+    else:
+        await message.answer(caption, parse_mode="HTML", reply_markup=keyboard)
+
+    await message.answer("✅ Предмет добавлен!", reply_markup=main_menu_keyboard)
     await state.finish()
 
-# Регистрация хендлеров
+# Регистрация
 def register(dp: Dispatcher):
-    dp.register_callback_query_handler(handle_remove_item_button, lambda c: c.data.startswith("remove_item_from:"), state="*")
-    dp.register_message_handler(handle_item_name_input, state=RemoveItemState.waiting_for_item_name)
+    dp.register_callback_query_handler(remove_item_from_box, lambda c: c.data.startswith("remove_item_from:"), state="*")
+    dp.register_callback_query_handler(confirm_remove_item, lambda c: c.data.startswith("confirm_remove_item:"), state="*")
+    dp.register_callback_query_handler(start_add_item, lambda c: c.data.startswith("add_item:"), state="*")
+    dp.register_message_handler(add_item_text, state=AddItemToBox.waiting_for_text)

@@ -17,8 +17,8 @@ async def on_startup(dp: Dispatcher):
 start.register(dp)
 add_box.register(dp)
 buttons.register(dp)
-find_box.register(dp)
 list_boxes.register(dp)
+find_box.register(dp)
 remove_item_inline.register(dp)
 delete_box_by_id.register(dp)
 
