@@ -8,6 +8,9 @@ dist/
 build/
 *.log
 
+# База данных SQLite
+database/storage.db
+
 # Env files
 .env
 .env.*
