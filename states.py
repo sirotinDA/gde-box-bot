@@ -7,3 +7,11 @@ class AddBox(StatesGroup):
 
 class SearchState(StatesGroup):
     waiting_for_keyword = State()
+
+class AddItemToBox(StatesGroup):
+    waiting_for_text = State()
+
+class AddItemFromMenu(StatesGroup):
+    waiting_for_location = State()
+    waiting_for_box = State()
+    waiting_for_item_text = State()

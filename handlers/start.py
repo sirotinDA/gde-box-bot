@@ -1,17 +1,6 @@
 from aiogram import types
 from aiogram.dispatcher import Dispatcher
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
-
-# Основное меню
-keyboard = ReplyKeyboardMarkup(resize_keyboard=True)
-keyboard.add(
-    KeyboardButton("📦 Мои коробки"),
-    KeyboardButton("➕ Добавить коробку")
-)
-keyboard.add(
-    KeyboardButton("📍 Места хранения"),
-    KeyboardButton("🔍 Поиск")
-)
+from handlers.keyboards import main_menu_keyboard
 
 async def cmd_start(message: types.Message):
     await message.answer(
@@ -19,9 +8,10 @@ async def cmd_start(message: types.Message):
         "Этот бот помогает учитывать, где и что ты хранишь:\n"
         "- Добавляй коробки с фото и описанием\n"
         "- Указывай место хранения (гараж, кладовка и т.д.)\n"
-        "- Ищи вещи по названию или по месту\n\n"
+        "- Ищи вещи по названию или по месту\n"
+        "- Удаляй ненужные коробки\n\n"
         "Выбери действие ниже:",
-        reply_markup=keyboard,
+        reply_markup=main_menu_keyboard,
         parse_mode="Markdown"
     )
 
