@@ -7,9 +7,8 @@ import aiosqlite
 from datetime import datetime
 from handlers import find_box
 from handlers import delete_box_by_id as delete_handlers
-from handlers.keyboards import main_menu_keyboard, cancel_keyboard, photo_keyboard
+from handlers.keyboards import get_main_keyboard, cancel_keyboard, photo_keyboard
 
-main_menu_keyboard = main_menu_keyboard
 cancel_keyboard = cancel_keyboard
 
 async def button_handler(message: types.Message, state: FSMContext):
@@ -25,7 +24,7 @@ async def button_handler(message: types.Message, state: FSMContext):
                     locations[loc] = locations.get(loc, 0) + 1
 
         if not locations:
-            await message.answer("📜 *У тебя пока нет коробок.*", parse_mode="Markdown")
+            await message.answer("📭 У тебя пока нет коробок.", reply_markup=get_main_keyboard(False))
             return
 
         keyboard = types.InlineKeyboardMarkup()
@@ -53,7 +52,7 @@ async def button_handler(message: types.Message, state: FSMContext):
                 locations = await cursor.fetchall()
 
         if not locations:
-            await message.answer("📝 У тебя пока нет коробок.", reply_markup=main_menu_keyboard)
+            await message.answer("📝 У тебя пока нет коробок.", reply_markup=get_main_keyboard(False))
             return
 
         keyboard = types.InlineKeyboardMarkup(row_width=2)
@@ -76,7 +75,7 @@ async def handle_choose_location_for_add(callback: types.CallbackQuery, state: F
             boxes = await cursor.fetchall()
 
     if not boxes:
-        await callback.message.answer("❗ В этом месте нет коробок.", reply_markup=main_menu_keyboard)
+        await callback.message.answer("❗ В этом месте нет коробок.", reply_markup=get_main_keyboard(True))
         await callback.answer()
         return
 
@@ -108,6 +107,9 @@ async def handle_view_location(callback: types.CallbackQuery, state: FSMContext)
         await callback.answer()
         return
 
+    # Сохраняем первое сообщение (список мест)
+    await state.update_data(view_msgs=[callback.message.message_id])
+
     text = f"📍 <b>{location}</b>\n\n"
     for i, (box_id, desc) in enumerate(boxes, 1):
         text += f"📦 <b>{i}:</b> {desc}\n"
@@ -117,11 +119,18 @@ async def handle_view_location(callback: types.CallbackQuery, state: FSMContext)
         types.InlineKeyboardButton("✏ Редактировать место", callback_data=f"edit_location:{location}"),
         types.InlineKeyboardButton("🗑 Удалить коробку", callback_data=f"remove_from_location:{location}"),
         types.InlineKeyboardButton("❌ Удалить место", callback_data=f"confirm_delete_location:{location}")
-        
     )
 
-    await callback.message.answer(text.strip(), parse_mode="HTML", reply_markup=keyboard)
+    # Отправляем второе сообщение
+    msg = await callback.message.answer(text.strip(), parse_mode="HTML", reply_markup=keyboard)
+
+    data = await state.get_data()
+    msgs = data.get("view_msgs", [])
+    msgs.append(msg.message_id)
+    await state.update_data(view_msgs=msgs)
+
     await callback.answer()
+
 
 async def handle_edit_location(callback: types.CallbackQuery, state: FSMContext):
     location = callback.data.replace("edit_location:", "")
@@ -148,7 +157,7 @@ async def update_location_name(message: types.Message, state: FSMContext):
         """, (new_location, old_location, user_id))
         await db.commit()
 
-    await message.answer(f"✅ Место «{old_location}» переименовано в «{new_location}»!", reply_markup=main_menu_keyboard)
+    await message.answer(f"✅ Место «{old_location}» переименовано в «{new_location}»!", reply_markup=get_main_keyboard(True))
     await state.finish()
 
 
@@ -201,32 +210,60 @@ async def delete_box_now(callback: types.CallbackQuery):
     await callback.answer()
 
 async def cancel_delete_box(callback: types.CallbackQuery):
-    await callback.message.answer("❌ Удаление отменено.", reply_markup=main_menu_keyboard)
+    await callback.message.answer("❌ Удаление отменено.", reply_markup=get_main_keyboard(True))
     await callback.answer()
 
-async def confirm_delete_location(callback: types.CallbackQuery):
+async def confirm_delete_location(callback: types.CallbackQuery, state: FSMContext):
     location = callback.data.replace("confirm_delete_location:", "")
     keyboard = types.InlineKeyboardMarkup()
     keyboard.add(
         types.InlineKeyboardButton("✅ Да, удалить", callback_data=f"delete_location:{location}"),
         types.InlineKeyboardButton("❌ Отмена", callback_data="cancel_delete_location")
     )
-    await callback.message.answer(f"⚠️ Удалить все коробки из места «{location}»?", reply_markup=keyboard)
+
+    msg = await callback.message.answer(f"⚠️ Удалить все коробки из места «{location}»?", reply_markup=keyboard)
+
+    data = await state.get_data()
+    msgs = data.get("view_msgs", [])
+    msgs.append(msg.message_id)
+    await state.update_data(view_msgs=msgs)
+
     await callback.answer()
 
-async def handle_delete_location(callback: types.CallbackQuery):
+
+async def handle_delete_location(callback: types.CallbackQuery, state: FSMContext):
     location = callback.data.replace("delete_location:", "")
     user_id = callback.from_user.id
 
+    # Удаляем все коробки из базы
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("DELETE FROM boxes WHERE user_id = ? AND location = ?", (user_id, location))
         await db.commit()
 
-    await callback.message.answer(f"✅ Место «{location}» и все коробки удалены.")
+    # Удаляем все сообщения, связанные с этим действием
+    data = await state.get_data()
+    msgs = data.get("view_msgs", [])
+    for msg_id in msgs:
+        try:
+            await callback.message.bot.delete_message(chat_id=user_id, message_id=msg_id)
+        except Exception as e:
+            print(f"[ERROR] Не удалось удалить сообщение {msg_id}: {e}")
+
+    await state.update_data(view_msgs=[])
+
+    # Финальное сообщение
+    await callback.message.bot.send_message(
+        chat_id=user_id,
+        text=f"✅ Место «{location}» и все коробки удалены.",
+        reply_markup=get_main_keyboard(True)
+    )
+
     await callback.answer()
 
+
+
 async def cancel_delete_location(callback: types.CallbackQuery):
-    await callback.message.answer("❌ Удаление места отменено.", reply_markup=main_menu_keyboard)
+    await callback.message.answer("❌ Удаление места отменено.", reply_markup=get_main_keyboard(True))
     await callback.answer()
 
 async def do_nothing(callback: types.CallbackQuery):
@@ -265,7 +302,7 @@ async def handle_move_box_to(callback: types.CallbackQuery):
         )
         await db.commit()
 
-    await callback.message.answer(f"✅ Коробка перемещена в «{new_location}»!", reply_markup=main_menu_keyboard)
+    await callback.message.answer(f"✅ Коробка перемещена в «{new_location}»!", reply_markup=get_main_keyboard(True))
     await callback.answer()
 
 async def handle_move_box_to(callback: types.CallbackQuery):
@@ -279,7 +316,7 @@ async def handle_move_box_to(callback: types.CallbackQuery):
         )
         await db.commit()
 
-    await callback.message.answer(f"✅ Коробка перемещена в «{new_location}»!", reply_markup=main_menu_keyboard)
+    await callback.message.answer(f"✅ Коробка перемещена в «{new_location}»!", reply_markup=get_main_keyboard(True))
     await callback.answer()
 
 

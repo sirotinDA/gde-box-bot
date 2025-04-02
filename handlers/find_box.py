@@ -2,7 +2,7 @@ from aiogram import types
 from aiogram.dispatcher import Dispatcher
 import aiosqlite
 from database.db import DB_PATH
-from handlers.keyboards import main_menu_keyboard, box_action_keyboard
+from handlers.keyboards import get_main_keyboard, box_action_keyboard
 
 async def find_box(message: types.Message):
     try:
@@ -13,7 +13,7 @@ async def find_box(message: types.Message):
             await message.answer(
                 "🔍 Введите что искать:\nПример: <code>кабель</code>",
                 parse_mode="HTML",
-                reply_markup=main_menu_keyboard
+                reply_markup=get_main_keyboard(True)
             )
             return
 
@@ -34,11 +34,11 @@ async def find_box(message: types.Message):
         if not results:
             await message.answer(
                 f"❌ По запросу \"{search_query}\" ничего не найдено",
-                reply_markup=main_menu_keyboard
+                reply_markup=get_main_keyboard(True)
             )
             return
 
-        found_msg = await message.answer(f"🔍 Найдено: {len(results)}", reply_markup=main_menu_keyboard)
+        found_msg = await message.answer(f"🔍 Найдено: {len(results)}", reply_markup=get_main_keyboard(True))
 
         for box in results:
             box_id = box['id']
@@ -93,12 +93,12 @@ async def find_box(message: types.Message):
                 print(f"[ERROR] Ошибка при отправке: {e}")
                 await message.answer(
                     "⚠ Ошибка при отправке результата.",
-                    reply_markup=main_menu_keyboard
+                    reply_markup=get_main_keyboard(True)
                 )
 
     except Exception as e:
         print(f"[FATAL ERROR] Ошибка в find_box: {e}")
-        await message.answer("⚠ Произошла ошибка при поиске", reply_markup=main_menu_keyboard)
+        await message.answer("⚠ Произошла ошибка при поиске", reply_markup=get_main_keyboard(True))
 
 def register(dp: Dispatcher):
     dp.register_message_handler(find_box, commands=["find"])

@@ -2,7 +2,7 @@ from aiogram import types
 from aiogram.dispatcher import Dispatcher
 import aiosqlite
 from database.db import DB_PATH
-from handlers.keyboards import main_menu_keyboard
+from handlers.keyboards import get_main_keyboard
 from datetime import datetime
 
 async def list_boxes(message: types.Message):
@@ -17,7 +17,7 @@ async def list_boxes(message: types.Message):
         boxes = await cursor.fetchall()
 
     if not boxes:
-        await message.answer("📭 У тебя пока нет коробок.", reply_markup=main_menu_keyboard)
+        await message.answer("📭 У тебя пока нет коробок.", reply_markup=get_main_keyboard(False))
         return
 
     for box in boxes:
@@ -69,7 +69,7 @@ async def list_boxes(message: types.Message):
                 )
         except Exception as e:
             print(f"[ERROR] Ошибка при отправке коробки: {e}")
-            await message.answer("⚠ Не удалось отобразить коробку.", reply_markup=main_menu_keyboard)
+            await message.answer("⚠ Не удалось отобразить коробку.", reply_markup=get_main_keyboard(True))
 
 def register(dp: Dispatcher):
     dp.register_message_handler(list_boxes, commands=["list"])
