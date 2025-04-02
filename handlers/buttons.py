@@ -114,12 +114,43 @@ async def handle_view_location(callback: types.CallbackQuery, state: FSMContext)
 
     keyboard = types.InlineKeyboardMarkup(row_width=2)
     keyboard.add(
+        types.InlineKeyboardButton("✏ Редактировать место", callback_data=f"edit_location:{location}"),
         types.InlineKeyboardButton("🗑 Удалить коробку", callback_data=f"remove_from_location:{location}"),
         types.InlineKeyboardButton("❌ Удалить место", callback_data=f"confirm_delete_location:{location}")
+        
     )
 
     await callback.message.answer(text.strip(), parse_mode="HTML", reply_markup=keyboard)
     await callback.answer()
+
+async def handle_edit_location(callback: types.CallbackQuery, state: FSMContext):
+    location = callback.data.replace("edit_location:", "")
+    await state.update_data(old_location=location)
+    await callback.message.answer(f"✏ Введите новое название для места: «{location}»")
+    await state.set_state("waiting_for_new_location_name")
+    await callback.answer()
+
+async def update_location_name(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    old_location = data.get("old_location")
+    new_location = message.text.strip().capitalize()
+    user_id = message.from_user.id
+
+    if not new_location:
+        await message.answer("❗ Название не может быть пустым.")
+        return
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            UPDATE boxes
+            SET location = ?
+            WHERE location = ? AND user_id = ?
+        """, (new_location, old_location, user_id))
+        await db.commit()
+
+    await message.answer(f"✅ Место «{old_location}» переименовано в «{new_location}»!", reply_markup=main_menu_keyboard)
+    await state.finish()
+
 
 async def handle_remove_from_location(callback: types.CallbackQuery, state: FSMContext):
     location = callback.data.replace("remove_from_location:", "")
@@ -201,6 +232,57 @@ async def cancel_delete_location(callback: types.CallbackQuery):
 async def do_nothing(callback: types.CallbackQuery):
     await callback.answer()
 
+async def handle_move_box(callback: types.CallbackQuery, state: FSMContext):
+    box_id = int(callback.data.split(":")[1])
+    user_id = callback.from_user.id
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT DISTINCT location FROM boxes WHERE user_id = ? AND id != ?",
+            (user_id, box_id)
+        )
+        locations = await cursor.fetchall()
+
+    if not locations:
+        await callback.answer("❌ Нет других мест для перемещения.")
+        return
+
+    keyboard = types.InlineKeyboardMarkup(row_width=1)
+    for (loc,) in locations:
+        keyboard.add(types.InlineKeyboardButton(text=loc, callback_data=f"move_box_to:{box_id}:{loc}"))
+
+    await callback.message.answer("🔄 Выбери новое место для коробки:", reply_markup=keyboard)
+    await callback.answer()
+
+async def handle_move_box_to(callback: types.CallbackQuery):
+    _, box_id, new_location = callback.data.split(":")
+    user_id = callback.from_user.id
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE boxes SET location = ? WHERE id = ? AND user_id = ?",
+            (new_location, box_id, user_id)
+        )
+        await db.commit()
+
+    await callback.message.answer(f"✅ Коробка перемещена в «{new_location}»!", reply_markup=main_menu_keyboard)
+    await callback.answer()
+
+async def handle_move_box_to(callback: types.CallbackQuery):
+    _, box_id, new_location = callback.data.split(":")
+    user_id = callback.from_user.id
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE boxes SET location = ? WHERE id = ? AND user_id = ?",
+            (new_location, box_id, user_id)
+        )
+        await db.commit()
+
+    await callback.message.answer(f"✅ Коробка перемещена в «{new_location}»!", reply_markup=main_menu_keyboard)
+    await callback.answer()
+
+
 def register(dp: Dispatcher):
     dp.register_message_handler(button_handler, state=None)
     dp.register_message_handler(process_search, state=SearchState.waiting_for_keyword)
@@ -215,3 +297,7 @@ def register(dp: Dispatcher):
     dp.register_callback_query_handler(handle_delete_location, lambda c: c.data.startswith("delete_location:"), state="*")
     dp.register_callback_query_handler(cancel_delete_location, lambda c: c.data == "cancel_delete_location", state="*")
     dp.register_callback_query_handler(do_nothing, lambda c: c.data == "none", state="*")
+    dp.register_callback_query_handler(handle_edit_location, lambda c: c.data.startswith("edit_location:"), state="*")
+    dp.register_message_handler(update_location_name, state="waiting_for_new_location_name")
+    dp.register_callback_query_handler(handle_move_box, lambda c: c.data.startswith("move_box:"), state="*")
+    dp.register_callback_query_handler(handle_move_box_to, lambda c: c.data.startswith("move_box_to:"), state="*")

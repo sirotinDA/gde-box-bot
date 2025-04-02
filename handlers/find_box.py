@@ -53,10 +53,20 @@ async def find_box(message: types.Message):
             keyboard = types.InlineKeyboardMarkup(row_width=2)
             keyboard.add(
                 types.InlineKeyboardButton("✏ Добавить предмет", callback_data=f"add_item:{box_id}:{found_msg.message_id}"),
-                types.InlineKeyboardButton("🗑 Удалить вещь", callback_data=f"remove_item_from:{box_id}"),
+                types.InlineKeyboardButton("🗑 Удалить вещь", callback_data=f"remove_item_from:{box_id}"
+                )
+            )
+            keyboard.add(
                 types.InlineKeyboardButton("❌ Удалить коробку", callback_data=f"delete_box_by_id:{box_id}:{found_msg.message_id}")
             )
 
+            # Добавляем кнопку перемещения, если есть >1 место
+            async with aiosqlite.connect(DB_PATH) as db_check:
+                cursor = await db_check.execute("SELECT DISTINCT location FROM boxes WHERE user_id = ?", (user_id,))
+                locations = await cursor.fetchall()
+                if len(locations) > 1:
+                    keyboard.add(types.InlineKeyboardButton("🔄 Переместить коробку", callback_data=f"move_box:{box_id}"))
+                    
             caption = (
                 f"📦 <b>Содержимое:</b> {description}\n"
                 f"📍 <b>Место:</b> {location}"
