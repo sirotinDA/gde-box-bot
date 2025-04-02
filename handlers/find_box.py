@@ -7,7 +7,7 @@ from handlers.keyboards import main_menu_keyboard, box_action_keyboard
 async def find_box(message: types.Message):
     try:
         user_id = message.from_user.id
-        search_query = (message.text or "").strip()
+        search_query = (message.text or "").strip().lower()  # 👈 делаем lowercase в Python
 
         if not search_query:
             await message.answer(
@@ -17,15 +17,19 @@ async def find_box(message: types.Message):
             )
             return
 
+        results = []
         async with aiosqlite.connect(DB_PATH) as db:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute("""
                 SELECT id, photo, description, location 
                 FROM boxes 
-                WHERE user_id = ? AND description LIKE ?
-            """, (user_id, f"%{search_query}%"))
+                WHERE user_id = ?
+            """, (user_id,))
+            all_boxes = await cursor.fetchall()
 
-            results = await cursor.fetchall()
+            for box in all_boxes:
+                if search_query in box["description"].lower():  # 👈 сравнение вручную
+                    results.append(box)
 
         if not results:
             await message.answer(
@@ -53,8 +57,7 @@ async def find_box(message: types.Message):
             keyboard = types.InlineKeyboardMarkup(row_width=2)
             keyboard.add(
                 types.InlineKeyboardButton("✏ Добавить предмет", callback_data=f"add_item:{box_id}:{found_msg.message_id}"),
-                types.InlineKeyboardButton("🗑 Удалить вещь", callback_data=f"remove_item_from:{box_id}"
-                )
+                types.InlineKeyboardButton("🗑 Удалить вещь", callback_data=f"remove_item_from:{box_id}")
             )
             keyboard.add(
                 types.InlineKeyboardButton("❌ Удалить коробку", callback_data=f"delete_box_by_id:{box_id}:{found_msg.message_id}")
@@ -66,7 +69,7 @@ async def find_box(message: types.Message):
                 locations = await cursor.fetchall()
                 if len(locations) > 1:
                     keyboard.add(types.InlineKeyboardButton("🔄 Переместить коробку", callback_data=f"move_box:{box_id}"))
-                    
+
             caption = (
                 f"📦 <b>Содержимое:</b> {description}\n"
                 f"📍 <b>Место:</b> {location}"
