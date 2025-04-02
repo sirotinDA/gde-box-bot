@@ -59,13 +59,24 @@ async def start_add_box(message: types.Message, state: FSMContext):
 
 async def handle_photo(message: types.Message, state: FSMContext):
     await state.update_data(photo=message.photo[-1].file_id)
-    await message.answer("✏️ Напиши, что находится в коробке:", reply_markup=cancel_keyboard)
+    await message.answer(
+        "✏️ Напиши, что находится в коробке:\n\n"
+        "_Перечисли предметы через запятую, например: отвертка, фонарик, батарейки_",
+        parse_mode="Markdown",
+        reply_markup=cancel_keyboard
+    )
     await AddBox.waiting_for_description.set()
 
 async def skip_photo(message: types.Message, state: FSMContext):
     await state.update_data(photo="no_photo.jpg")
-    await message.answer("✏️ Напиши, что находится в коробке:", reply_markup=cancel_keyboard)
+    await message.answer(
+        "✏️ Напиши, что находится в коробке:\n\n"
+        "_Перечисли предметы через запятую, например: отвертка, фонарик, батарейки_",
+        parse_mode="Markdown",
+        reply_markup=cancel_keyboard
+    )
     await AddBox.waiting_for_description.set()
+
 
 async def handle_description(message: types.Message, state: FSMContext):
     desc = message.text.strip()
