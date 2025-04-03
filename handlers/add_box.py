@@ -6,10 +6,8 @@ from database.db import DB_PATH
 import aiosqlite
 from datetime import datetime
 from handlers import find_box
-from handlers.keyboards import main_menu_keyboard, cancel_keyboard, photo_keyboard
+from handlers.keyboards import get_main_keyboard, cancel_keyboard, photo_keyboard
 
-# Главное меню кнопки
-main_menu_keyboard = main_menu_keyboard
 cancel_keyboard = cancel_keyboard
 
 # Кнопки: стартовые команды
@@ -59,12 +57,22 @@ async def start_add_box(message: types.Message, state: FSMContext):
 
 async def handle_photo(message: types.Message, state: FSMContext):
     await state.update_data(photo=message.photo[-1].file_id)
-    await message.answer("✏️ Напиши, что находится в коробке:", reply_markup=cancel_keyboard)
+    await message.answer(
+        "✏️ Напиши, что находится в коробке:\n\n"
+        "_Перечисли предметы через запятую, например:_ отвертка, фонарик, батарейки",
+        parse_mode="Markdown",
+        reply_markup=cancel_keyboard
+    )
     await AddBox.waiting_for_description.set()
 
 async def skip_photo(message: types.Message, state: FSMContext):
     await state.update_data(photo="no_photo.jpg")
-    await message.answer("✏️ Напиши, что находится в коробке:", reply_markup=cancel_keyboard)
+    await message.answer(
+        "✏️ Напиши, что находится в коробке:\n\n"
+        "_Перечисли предметы через запятую, например:_ отвертка, фонарик, батарейки",
+        parse_mode="Markdown",
+        reply_markup=cancel_keyboard
+    )
     await AddBox.waiting_for_description.set()
 
 async def handle_description(message: types.Message, state: FSMContext):
@@ -120,7 +128,7 @@ async def handle_location_inline(message: types.Message, state: FSMContext):
     location = message.text.strip().capitalize()
 
     if not all([photo, description, location]):
-        await message.answer("⚠️ Ошибка добавления. Попробуй снова.", reply_markup=main_menu_keyboard)
+        await message.answer("⚠️ Ошибка добавления. Попробуй снова.", reply_markup=get_main_keyboard(False))
         await state.finish()
         return
 
@@ -131,16 +139,15 @@ async def handle_location_inline(message: types.Message, state: FSMContext):
         """, (user_id, photo, description, location, datetime.now().isoformat()))
         await db.commit()
 
-    await message.answer("✅ Коробка добавлена!", reply_markup=main_menu_keyboard)
+    await message.answer("✅ Коробка добавлена!", reply_markup=get_main_keyboard(True))
     await state.finish()
 
 # Обработка "Назад" при добавлении коробки
 async def handle_cancel_add_box(message: types.Message, state: FSMContext):
     await state.finish()
-    await message.answer("❌ Добавление отменено.", reply_markup=main_menu_keyboard)
+    await message.answer("❌ Добавление отменено.", reply_markup=get_main_keyboard(True))
 
 # Регистрация хендлеров
-
 def register(dp: Dispatcher):
     dp.register_message_handler(handle_cancel_add_box, Text(equals="⬅ Назад"), state="*")
     dp.register_message_handler(start_add_box, Text(equals="➕ Добавить коробку"), state=None)

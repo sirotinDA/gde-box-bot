@@ -2,39 +2,43 @@ from aiogram import types
 from aiogram.dispatcher import Dispatcher
 import aiosqlite
 from database.db import DB_PATH
-from handlers.keyboards import main_menu_keyboard, box_action_keyboard
+from handlers.keyboards import get_main_keyboard, box_action_keyboard
 
 async def find_box(message: types.Message):
     try:
         user_id = message.from_user.id
-        search_query = (message.text or "").strip()
+        search_query = (message.text or "").strip().lower()  # 👈 делаем lowercase в Python
 
         if not search_query:
             await message.answer(
                 "🔍 Введите что искать:\nПример: <code>кабель</code>",
                 parse_mode="HTML",
-                reply_markup=main_menu_keyboard
+                reply_markup=get_main_keyboard(True)
             )
             return
 
+        results = []
         async with aiosqlite.connect(DB_PATH) as db:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute("""
                 SELECT id, photo, description, location 
                 FROM boxes 
-                WHERE user_id = ? AND description LIKE ?
-            """, (user_id, f"%{search_query}%"))
+                WHERE user_id = ?
+            """, (user_id,))
+            all_boxes = await cursor.fetchall()
 
-            results = await cursor.fetchall()
+            for box in all_boxes:
+                if search_query in box["description"].lower():  # 👈 сравнение вручную
+                    results.append(box)
 
         if not results:
             await message.answer(
                 f"❌ По запросу \"{search_query}\" ничего не найдено",
-                reply_markup=main_menu_keyboard
+                reply_markup=get_main_keyboard(True)
             )
             return
 
-        found_msg = await message.answer(f"🔍 Найдено: {len(results)}", reply_markup=main_menu_keyboard)
+        found_msg = await message.answer(f"🔍 Найдено: {len(results)}", reply_markup=get_main_keyboard(True))
 
         for box in results:
             box_id = box['id']
@@ -53,9 +57,18 @@ async def find_box(message: types.Message):
             keyboard = types.InlineKeyboardMarkup(row_width=2)
             keyboard.add(
                 types.InlineKeyboardButton("✏ Добавить предмет", callback_data=f"add_item:{box_id}:{found_msg.message_id}"),
-                types.InlineKeyboardButton("🗑 Удалить вещь", callback_data=f"remove_item_from:{box_id}"),
+                types.InlineKeyboardButton("🗑 Удалить вещь", callback_data=f"remove_item_from:{box_id}")
+            )
+            keyboard.add(
                 types.InlineKeyboardButton("❌ Удалить коробку", callback_data=f"delete_box_by_id:{box_id}:{found_msg.message_id}")
             )
+
+            # Добавляем кнопку перемещения, если есть >1 место
+            async with aiosqlite.connect(DB_PATH) as db_check:
+                cursor = await db_check.execute("SELECT DISTINCT location FROM boxes WHERE user_id = ?", (user_id,))
+                locations = await cursor.fetchall()
+                if len(locations) > 1:
+                    keyboard.add(types.InlineKeyboardButton("🔄 Переместить коробку", callback_data=f"move_box:{box_id}"))
 
             caption = (
                 f"📦 <b>Содержимое:</b> {description}\n"
@@ -80,12 +93,12 @@ async def find_box(message: types.Message):
                 print(f"[ERROR] Ошибка при отправке: {e}")
                 await message.answer(
                     "⚠ Ошибка при отправке результата.",
-                    reply_markup=main_menu_keyboard
+                    reply_markup=get_main_keyboard(True)
                 )
 
     except Exception as e:
         print(f"[FATAL ERROR] Ошибка в find_box: {e}")
-        await message.answer("⚠ Произошла ошибка при поиске", reply_markup=main_menu_keyboard)
+        await message.answer("⚠ Произошла ошибка при поиске", reply_markup=get_main_keyboard(True))
 
 def register(dp: Dispatcher):
     dp.register_message_handler(find_box, commands=["find"])

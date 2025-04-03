@@ -2,7 +2,7 @@ from aiogram import types
 from aiogram.dispatcher import FSMContext, Dispatcher
 import aiosqlite
 from database.db import DB_PATH
-from handlers.keyboards import main_menu_keyboard
+from handlers.keyboards import get_main_keyboard
 
 async def handle_delete_start(callback: types.CallbackQuery):
     user_id = callback.from_user.id
@@ -13,7 +13,7 @@ async def handle_delete_start(callback: types.CallbackQuery):
             boxes = await cursor.fetchall()
 
     if not boxes:
-        await callback.message.answer("📭 В этом месте нет коробок.", reply_markup=main_menu_keyboard)
+        await callback.message.answer("📭 В этом месте нет коробок.", reply_markup=get_main_keyboard)
         await callback.answer()
         return
 
@@ -67,7 +67,7 @@ async def delete_box_now(callback: types.CallbackQuery):
     await callback.answer()
 
 async def cancel_delete(callback: types.CallbackQuery):
-    await callback.message.answer("❌ Удаление отменено.", reply_markup=main_menu_keyboard)
+    await callback.message.answer("❌ Удаление отменено.", reply_markup=get_main_keyboard)
     await callback.answer()
 
 async def do_nothing(callback: types.CallbackQuery):
